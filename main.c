@@ -27,17 +27,23 @@ volatile uint8_t adcUpdated = 0; // Variable de estado para actualizar valores A
 // Prototipos de funciones
 void setup(void);
 void actualizarVoltaje(char *lista, uint8_t valor);
-
+void enviarUART(char data);
+void enviarStringUART(char* str);
 void actualizarLista(char *lista, int valor);
 void actualizarLCD(void);
 
 // Configuración inicial del sistema
 void setup(void) {
 	cli();  // Deshabilitar interrupciones globales
-	DDRD = 0xFF;  // Puerto D como salida
+	DDRD = 0xFC;  // Puerto D como salida
 	DDRB = 0xFF;  // Puerto B como salida
 	DDRC = 0;     // Puerto C como entrada
 	
+	// Configuración UART
+	UBRR0H = (BRC >> 8);  // Configurar baud rate alto
+	UBRR0L = BRC;         // Configurar baud rate bajo
+	UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0); // Habilitar transmisión, recepción e interrupción RX
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // Configurar formato: 8 bits de datos, 1 bit de parada
 	
 	Lcd_Init8bits();  // Inicializar pantalla LCD
 	_delay_ms(50);    // Esperar para asegurarse de que la LCD se inicialice correctamente
@@ -80,6 +86,18 @@ void actualizarLista(char *lista, int valor) {
 	lista[3] = '\0';
 }
 
+// Función para enviar un dato por UART
+void enviarUART(char data) {
+	while (!(UCSR0A & (1 << UDRE0)));  // Esperar a que el buffer esté vacío
+	UDR0 = data;  // Enviar dato
+}
+
+// Función para enviar una cadena de caracteres por UART
+void enviarStringUART(char* str) {
+	while(*str) {
+		enviarUART(*str++);
+	}
+}
 
 // Función para actualizar la pantalla LCD
 void actualizarLCD(void) {
@@ -90,6 +108,7 @@ void actualizarLCD(void) {
 	Lcd_Write_String("S2:");  // Escribir etiqueta de Sensor 2
 	Lcd_Set_Cursor(0, 13);
 	Lcd_Write_String("S3:");  // Escribir etiqueta de Sensor 3
+	
 	// Actualizar las cadenas con los valores actuales
 	actualizarVoltaje(lista1, Val1);
 	actualizarVoltaje(lista2, Val2);
@@ -115,6 +134,14 @@ int main(void) {
 		// Verificar si hay cambios en los valores del ADC o el contador
 		if ((Val1 != prevVal1) || (Val2 != prevVal2) || (contador != prevContador) || updateLCD) {
 			actualizarLCD();  // Actualizar la pantalla LCD
+			// Enviar los valores actuales por UART
+			enviarStringUART("S1: ");
+			enviarStringUART(lista1);
+			enviarStringUART(" S2: ");
+			enviarStringUART(lista2);
+			enviarStringUART(" S3: ");
+			enviarStringUART(lista3);
+			enviarUART('\n');
 			// Guardar los valores actuales como anteriores
 			prevVal1 = Val1;
 			prevVal2 = Val2;
@@ -127,9 +154,8 @@ int main(void) {
 		actualizarVoltaje(lista1, Val1);
 		actualizarVoltaje(lista2, Val2);
 		actualizarLista(lista3, contador);
-		
-		_delay_ms(100);  // Esperar 100ms
 	}
+	
 }
 
 // Interrupción del ADC
@@ -147,3 +173,17 @@ ISR(ADC_vect) {
 	adcUpdated = 1; // Indicar que se debe actualizar la LCD
 }
 
+// Interrupción UART para recibir datos
+ISR(USART_RX_vect) {
+	char received = UDR0;  // Leer dato recibido
+	if (received == '+') {
+		if (contador < 255) {
+			contador++;  // Incrementar contador si es menor a 255
+		}
+		} else if (received == '-') {
+		if (contador > 0) {
+			contador--;  // Decrementar contador si es mayor a 0
+		}
+	}
+	updateLCD = 1; // Indicar que se debe actualizar la LCD
+}
